@@ -1,131 +1,265 @@
 import random
-from rating import rate_username
+import string
 
-VOWELS = "aeiou"
-COMMON_CONS = "bcdghklmnprst"
-ACCENT_CONS = "fvwyzjxq"
+VOWELS = set("aeiou")
 
-# Фонетически приятные двухбуквенные куски.
-SYLLABLES = [
-    "ba", "be", "bi", "bo", "bu",
-    "da", "de", "di", "do", "du",
-    "fa", "fe", "fi", "fo", "fu",
-    "ga", "ge", "gi", "go", "gu",
-    "ka", "ke", "ki", "ko", "ku",
+# Красивые начала и слоги
+GOOD_STARTS = (
+    "ae", "al", "ar", "av",
+    "el", "ev",
+    "ia", "il", "ir",
     "la", "le", "li", "lo", "lu",
-    "ma", "me", "mi", "mo", "mu",
+    "ma", "me", "mi", "mo",
     "na", "ne", "ni", "no", "nu",
-    "pa", "pe", "pi", "po", "pu",
     "ra", "re", "ri", "ro", "ru",
-    "sa", "se", "si", "so", "su",
-    "ta", "te", "ti", "to", "tu",
-    "va", "ve", "vi", "vo", "vu",
-    "za", "ze", "zi", "zo", "zu",
-    "xe", "xi", "xo", "za", "ze",
-]
+    "sa", "se", "si", "so",
+    "ta", "te", "ti", "to",
+    "va", "ve", "vi", "vo",
+    "za", "ze", "zi", "zo",
+)
 
-# Готовые короткие формы помогают получать "брендовый" вид.
-PATTERNS_5 = [
-    "CVCVC", "CVCVV", "CVVCV", "VCVCV",
-    "CVCCV", "CCVCV", "CVCVC"
-]
+GOOD_MIDDLES = (
+    "la", "le", "li", "lo", "lu",
+    "ra", "re", "ri", "ro", "ru",
+    "na", "ne", "ni", "no", "nu",
+    "va", "ve", "vi", "vo",
+    "za", "ze", "zi", "zo",
+    "sa", "se", "si", "so",
+    "ta", "te", "ti", "to",
+    "ma", "me", "mi", "mo",
+    "el", "en", "er",
+    "an", "ar", "av",
+    "ia", "io",
+)
 
-def _pick_consonant():
-    # Редкая буква появляется нечасто и только как акцент.
-    if random.random() < 0.10:
-        return random.choice(ACCENT_CONS)
-    return random.choice(COMMON_CONS)
+GOOD_ENDS = (
+    "a", "e", "i", "o", "u",
+    "al", "an", "ar",
+    "el", "en", "er",
+    "ia", "io",
+    "is", "on", "or",
+    "us", "ix", "ex",
+)
+
+ROOTS = (
+    "avel", "avero", "azur",
+    "elva", "elora", "evra",
+    "luna", "nexa", "navi",
+    "nova", "novi", "orla",
+    "vera", "veri", "vexa",
+    "viro", "zena", "zora",
+    "zuri", "lira", "livo",
+    "mira", "milo", "nora",
+    "niva", "riva", "rivo",
+    "sela", "sora", "savi",
+    "tavi", "vani", "vela",
+    "velar", "zavel",
+    "zelva", "zoria",
+    "naver", "lurex", "virel",
+)
+
+# Плохие сочетания.
+BAD_PAIRS = (
+    "qq", "qx", "xq", "qz", "zq",
+    "jq", "qj", "jx", "xj",
+    "hx", "xh", "gx", "xg",
+    "kx", "xk", "qh", "hq",
+)
+
+BAD_LETTERS = set("qx")
 
 
-def _build_pattern(pattern):
-    result = []
-    for p in pattern:
-        if p == "V":
-            result.append(random.choice(VOWELS))
-        elif p == "C":
-            result.append(_pick_consonant())
-    return "".join(result)
-
-
-def _syllable_candidate(length):
-    value = ""
-    while len(value) < length:
-        value += random.choice(SYLLABLES)
-
-    value = value[:length]
-
-    # Иногда добавляем один редкий акцент, но не делаем кашу.
-    if length >= 5 and random.random() < 0.18:
-        pos = random.choice([0, 1, 2, 3])
-        value = value[:pos] + random.choice("zvxfj") + value[pos + 1:]
-
-    return value
-
-
-def _is_clean(u):
-    if len(set(u)) < 3:
+def is_valid_username(username):
+    if not username:
         return False
 
-    # Не создаём явно мусорные последовательности.
-    bad = (
-        "qq", "xx", "qx", "xq", "qz", "zq",
-        "xj", "jx", "qj", "jq"
-    )
-    if any(x in u for x in bad):
+    if not 5 <= len(username) <= 32:
         return False
 
-    # Не больше двух редких букв.
-    if sum(c in "qzxj" for c in u) > 2:
+    if not username.isascii():
+        return False
+
+    if not username.isalpha():
         return False
 
     return True
 
 
-def generate_candidates(count=120, length=5, mask=None):
-    """
-    Генерирует большой локальный пул, ранжирует его и возвращает
-    только лучшие кандидаты. Telegram-запросов здесь нет.
-    """
+def looks_bad(username):
+    username = username.lower()
 
-    target_pool = max(count * 80, 5000)
-    candidates = set()
+    # Слишком много "тяжёлых" букв
+    if sum(c in BAD_LETTERS for c in username) >= 2:
+        return True
 
-    if mask:
-        # Для маски генерируем только допустимые варианты.
-        for _ in range(target_pool):
-            u = "".join(
-                random.choice("abcdefghijklmnopqrstuvwxyz") if c == "?"
-                else c.lower()
-                for c in mask
-            )
+    # Плохие пары
+    for pair in BAD_PAIRS:
+        if pair in username:
+            return True
 
-            if _is_clean(u):
-                candidates.add(u)
+    # Три согласные подряд
+    consonants = 0
 
-        ranked = sorted(
-            candidates,
-            key=rate_username,
-            reverse=True
-        )
-        return ranked[:count]
-
-    for _ in range(target_pool):
-        if length == 5:
-            if random.random() < 0.65:
-                u = _build_pattern(random.choice(PATTERNS_5))
-            else:
-                u = _syllable_candidate(length)
+    for char in username:
+        if char in VOWELS:
+            consonants = 0
         else:
-            u = _syllable_candidate(length)
+            consonants += 1
 
-        if len(u) == length and u.isalpha() and _is_clean(u):
-            candidates.add(u)
+            if consonants >= 3:
+                return True
 
-    # Чем выше рейтинг — тем раньше scanner отправит ник Telegram.
-    ranked = sorted(
-        candidates,
-        key=lambda x: (rate_username(x), random.random()),
-        reverse=True
-    )
+    # Три гласные подряд тоже обычно выглядят плохо
+    vowels = 0
 
-    return ranked[:count]
+    for char in username:
+        if char in VOWELS:
+            vowels += 1
+
+            if vowels >= 3:
+                return True
+        else:
+            vowels = 0
+
+    return False
+
+
+def natural_candidate(length):
+    """
+    Генерирует читаемый ник заданной длины.
+    """
+
+    # Сначала пробуем красивые корни
+    if random.random() < 0.65:
+        root = random.choice(ROOTS)
+
+        if len(root) == length:
+            return root
+
+        if len(root) > length:
+            candidate = root[:length]
+
+            if is_valid_username(candidate) and not looks_bad(candidate):
+                return candidate
+
+        # Достраиваем короткий корень
+        while len(root) < length:
+            root += random.choice(GOOD_MIDDLES + GOOD_ENDS)
+
+        candidate = root[:length]
+
+        if is_valid_username(candidate) and not looks_bad(candidate):
+            return candidate
+
+    # Слоговая генерация
+    result = ""
+
+    while len(result) < length:
+        if not result:
+            chunk = random.choice(GOOD_STARTS)
+        else:
+            chunk = random.choice(GOOD_MIDDLES)
+
+        result += chunk
+
+    result = result[:length]
+
+    if is_valid_username(result) and not looks_bad(result):
+        return result
+
+    # Запасной вариант CV/CVC
+    result = ""
+
+    consonants = "bcdfghklmnprstvz"
+    vowels = "aeiou"
+
+    for i in range(length):
+        if i % 2 == 0:
+            result += random.choice(consonants)
+        else:
+            result += random.choice(vowels)
+
+    return result
+
+
+def mask_candidate(mask):
+    """
+    Генерация по маске.
+    ? = любая буква.
+    """
+
+    letters = string.ascii_lowercase
+
+    result = ""
+
+    for char in mask.lower():
+        if char == "?":
+            result += random.choice(letters)
+        elif char in letters:
+            result += char
+        else:
+            return None
+
+    if not is_valid_username(result):
+        return None
+
+    return result
+
+
+def generate_candidates(count=100, length=5, mask=None):
+    """
+    Генерирует много кандидатов для последующей проверки Telegram.
+
+    count — сколько вернуть.
+    length — длина ника.
+    mask — например a?b?c.
+    """
+
+    if mask is not None:
+        mask = mask.lower()
+
+        if not 5 <= len(mask) <= 8:
+            return []
+
+        result = set()
+
+        attempts = max(count * 100, 1000)
+
+        for _ in range(attempts):
+            candidate = mask_candidate(mask)
+
+            if not candidate:
+                continue
+
+            if looks_bad(candidate):
+                continue
+
+            result.add(candidate)
+
+            if len(result) >= count:
+                break
+
+        return list(result)
+
+    if length not in (5, 6, 7, 8):
+        return []
+
+    result = set()
+
+    attempts = max(count * 100, 1000)
+
+    for _ in range(attempts):
+        candidate = natural_candidate(length)
+
+        if not candidate:
+            continue
+
+        if looks_bad(candidate):
+            continue
+
+        result.add(candidate.lower())
+
+        if len(result) >= count:
+            break
+
+    return list(result)
