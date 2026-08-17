@@ -1,18 +1,19 @@
 VOWELS = set("aeiou")
 
-# Красивые пары получают дополнительный вес
+BAD_LETTERS = set("qx")
+
 GOOD_PAIRS = {
     "ae", "al", "ar", "av",
     "el", "ev",
-    "ia", "il", "ir", "io",
+    "ia", "ie", "il", "ir", "io",
     "la", "le", "li", "lo", "lu",
-    "ma", "me", "mi", "mo",
+    "ma", "me", "mi", "mo", "mu",
     "na", "ne", "ni", "no", "nu",
     "ra", "re", "ri", "ro", "ru",
-    "sa", "se", "si", "so",
-    "ta", "te", "ti", "to",
-    "va", "ve", "vi", "vo",
-    "za", "ze", "zi", "zo",
+    "sa", "se", "si", "so", "su",
+    "ta", "te", "ti", "to", "tu",
+    "va", "ve", "vi", "vo", "vu",
+    "za", "ze", "zi", "zo", "zu",
 }
 
 BAD_PAIRS = {
@@ -20,121 +21,123 @@ BAD_PAIRS = {
     "jq", "qj", "jx", "xj",
     "hx", "xh", "gx", "xg",
     "kx", "xk", "qh", "hq",
+    "bh", "hb", "ph", "hp",
+    "vh", "hv", "dh", "hd",
+    "cb", "bc", "cp", "pc",
 }
 
 
-def _clamp(value, minimum=0.0, maximum=10.0):
-    return max(minimum, min(maximum, value))
+def _clamp(value):
+    return max(0.0, min(10.0, value))
 
 
-def _pronounceability(username):
-    """
-    Оценивает насколько ник похож на нормальное
-    произносимое слово.
-    """
+def is_bad_username(username):
+    username = username.lower()
+
+    # q и x полностью запрещаем для обычного генератора
+    if any(char in BAD_LETTERS for char in username):
+        return True
+
+    # Плохие пары
+    for pair in BAD_PAIRS:
+        if pair in username:
+            return True
+
+    # 3 согласные подряд
+    consonants = 0
+
+    for char in username:
+        if char in VOWELS:
+            consonants = 0
+        else:
+            consonants += 1
+
+            if consonants >= 3:
+                return True
+
+    # 3 гласные подряд
+    vowels = 0
+
+    for char in username:
+        if char in VOWELS:
+            vowels += 1
+
+            if vowels >= 3:
+                return True
+        else:
+            vowels = 0
+
+    return False
+
+
+def rate_username(username):
+    username = username.lower().strip()
+
+    if not username.isascii() or not username.isalpha():
+        return 0.0
+
+    if not 5 <= len(username) <= 8:
+        return 0.0
+
+    # Мусор сразу получает 0
+    if is_bad_username(username):
+        return 0.0
 
     score = 5.0
 
-    username = username.lower()
-
-    # Чередование согласных/гласных
+    # Чередование согласная/гласная
     transitions = 0
 
     for a, b in zip(username, username[1:]):
         if (a in VOWELS) != (b in VOWELS):
             transitions += 1
 
-    if len(username) > 1:
-        ratio = transitions / (len(username) - 1)
+    ratio = transitions / max(1, len(username) - 1)
 
-        if ratio >= 0.65:
-            score += 2.2
-        elif ratio >= 0.5:
-            score += 1.2
-        elif ratio < 0.3:
-            score -= 1.8
+    if ratio >= 0.75:
+        score += 2.0
+    elif ratio >= 0.60:
+        score += 1.3
+    elif ratio >= 0.45:
+        score += 0.5
+    else:
+        score -= 1.5
 
     # Красивые пары
     for i in range(len(username) - 1):
         pair = username[i:i + 2]
 
         if pair in GOOD_PAIRS:
-            score += 0.35
+            score += 0.3
 
-        if pair in BAD_PAIRS:
-            score -= 2.0
+    # Красивые окончания
+    if username.endswith((
+        "a", "e", "i", "o",
+        "ia", "ie", "io",
+        "al", "el", "er",
+        "an", "ar", "en", "in",
+        "on", "or"
+    )):
+        score += 0.6
 
-    # Три согласные подряд
-    for i in range(len(username) - 2):
-        part = username[i:i + 3]
+    # Короткие ники ценнее
+    if len(username) == 5:
+        score += 1.3
+    elif len(username) == 6:
+        score += 0.9
+    elif len(username) == 7:
+        score += 0.5
 
-        if all(c not in VOWELS for c in part):
-            score -= 2.5
-
-    # Три гласные подряд
-    for i in range(len(username) - 2):
-        part = username[i:i + 3]
-
-        if all(c in VOWELS for c in part):
-            score -= 1.5
-
-    return _clamp(score)
-
-
-def rate_username(username):
-    """
-    Основной рейтинг ника 0–10.
-
-    Важно:
-    это рейтинг КРАСИВОЙ/ЛИКВИДНОЙ формы,
-    а не гарантия реальной рыночной цены.
-    """
-
-    username = username.lower().strip()
-
-    if not username.isascii() or not username.isalpha():
-        return 0.0
-
-    if not 5 <= len(username) <= 32:
-        return 0.0
-
-    score = _pronounceability(username)
-
-    # Короткие ники ценнее при прочих равных
-    length_bonus = {
-        5: 1.4,
-        6: 0.9,
-        7: 0.5,
-        8: 0.2,
-    }.get(len(username), 0.0)
-
-    score += length_bonus
-
-    # Повтор букв может быть красивым, но не слишком часто
-    repeated = 0
-
-    for a, b in zip(username, username[1:]):
-        if a == b:
-            repeated += 1
+    # Повторы
+    repeated = sum(
+        1 for a, b in zip(username, username[1:])
+        if a == b
+    )
 
     if repeated == 1:
-        score += 0.2
+        score += 0.1
     elif repeated >= 2:
-        score -= 0.8
-
-    # Слишком много редких тяжёлых букв
-    heavy = sum(c in "qxjx" for c in username)
-
-    if heavy == 1:
-        score -= 0.8
-    elif heavy >= 2:
-        score -= 2.5
-
-    # Симметричные/приятные окончания
-    if username.endswith(
-        ("a", "e", "i", "o", "ia", "io", "el", "er", "en", "ar")
-    ):
-        score += 0.5
+        score -= 1.0
 
     return round(_clamp(score), 1)
 
