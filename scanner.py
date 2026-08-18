@@ -1,5 +1,4 @@
 import asyncio
-import random
 import time
 from pathlib import Path
 
@@ -100,63 +99,30 @@ async def find_free_usernames(
 
     results = []
 
-    # ---------------------------------------------------------
-    # Создаём 3 Telegram-клиента
-    # ---------------------------------------------------------
+    # =========================================================
+    # СОЗДАЁМ ВСЕ СЕССИИ
+    # =========================================================
 
-    clients = []
+    accounts = []
 
     for session_name in SESSION_NAMES:
-    session_path = Path(session_name)
-
-    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    print(f"🔎 Сессия: {session_name}")
-    print(f"📂 Рабочая папка: {Path.cwd()}")
-    print(f"📄 Путь к session: {session_path.resolve()}")
-    print(f"📦 Файл существует: {session_path.exists()}")
-
-    if session_path.exists():
-        print(f"📏 Размер файла: {session_path.stat().st_size} байт")
-
-    client = TelegramClient(
-        session_name,
-        api_id,
-        api_hash,
-    )
-
-    await client.connect()
-
-    print(f"🔌 Telegram connected: {client.is_connected()}")
-
-    authorized = await client.is_user_authorized()
-
-    print(f"🔐 Авторизована: {authorized}")
-
-    if not authorized:
-        await client.disconnect()
-        raise RuntimeError(
-            f"Сессия '{session_name}' не авторизована."
+        client = TelegramClient(
+            session_name,
+            api_id,
+            api_hash,
         )
 
-    clients.append({
-        "name": session_name,
-        "client": client,
-        "cooldown_until": 0.0,
-    })
+        await client.connect()
 
-    print(f"🟢 Сессия подключена: {session_name}")
-
-        # Очень важно:
-        # если сессия не авторизована, НЕ пытаемся вводить телефон.
-        # Это предотвращает EOFError в BotHost.
         if not await client.is_user_authorized():
             await client.disconnect()
+
             raise RuntimeError(
                 f"Сессия '{session_name}' не авторизована. "
                 f"Авторизуйте её на ПК и загрузите .session файл."
             )
 
-        clients.append({
+        accounts.append({
             "name": session_name,
             "client": client,
             "cooldown_until": 0.0,
@@ -164,61 +130,91 @@ async def find_free_usernames(
 
         print(f"🟢 Сессия подключена: {session_name}")
 
-    if not clients:
+    if not accounts:
         raise RuntimeError("Нет доступных Telegram-сессий.")
 
+    # Индекс для последовательной ротации:
+    # 0 → 1 → 2 → 0 → ...
+    next_account_index = 0
+
     try:
-        for username in unique:
+
+        # =====================================================
+        # ОСНОВНОЙ ЦИКЛ
+        # =====================================================
+
+        username_index = 0
+
+        while username_index < len(unique):
+
+            username = unique[username_index]
+
             rating = rate_username(username)
 
             if rating < minimum_rating:
+                username_index += 1
                 continue
 
             # -------------------------------------------------
-            # Ищем аккаунт, который сейчас не находится
-            # на FloodWait.
+            # Ищем доступную сессию.
             # -------------------------------------------------
 
-            while True:
-                now = time.time()
+            account = None
 
-                available = [
-                    account
-                    for account in clients
-                    if account["cooldown_until"] <= now
-                ]
+            for _ in range(len(accounts)):
+                candidate = accounts[next_account_index]
 
-                if available:
-                    # Случайный выбор среди доступных аккаунтов.
-                    account = random.choice(available)
+                next_account_index = (
+                    next_account_index + 1
+                ) % len(accounts)
+
+                if candidate["cooldown_until"] <= time.time():
+                    account = candidate
                     break
 
-                # Все аккаунты временно недоступны.
+            # -------------------------------------------------
+            # Все сессии получили FloodWait.
+            # -------------------------------------------------
+
+            if account is None:
+
+                now = time.time()
+
                 next_available = min(
                     account["cooldown_until"]
-                    for account in clients
+                    for account in accounts
                 )
 
-                wait_time = max(1, next_available - now)
+                wait_time = max(
+                    1,
+                    int(next_available - now)
+                )
 
                 print(
-                    f"⏳ Все аккаунты на cooldown. "
-                    f"Ждём {int(wait_time)} сек."
+                    f"⏳ Все 3 сессии на cooldown. "
+                    f"Ждём {wait_time} сек."
                 )
 
                 await asyncio.sleep(wait_time)
 
+                continue
+
             client = account["client"]
             session_name = account["name"]
 
+            # -------------------------------------------------
+            # Проверяем username.
+            # -------------------------------------------------
+
             try:
+
                 status = await check_one(
                     client,
                     username,
                 )
 
             except ScannerCooldown as e:
-                # Этот аккаунт временно не используем.
+
                 account["cooldown_until"] = (
                     time.time() + e.seconds
                 )
@@ -228,16 +224,21 @@ async def find_free_usernames(
                     f"{e.seconds} сек."
                 )
 
-                # Этот username пока не считаем проверенным.
-                # Переходим к следующему доступному аккаунту.
+                # ВАЖНО:
+                # username НЕ увеличиваем.
+                #
+                # Поэтому следующий доступный аккаунт
+                # проверит ТОТ ЖЕ username.
                 continue
 
             # -------------------------------------------------
-            # Обработка результата
+            # Результаты
             # -------------------------------------------------
 
             if status == "occupied":
+
                 add_occupied(username)
+
                 occupied.add(username)
                 already_checked.add(username)
 
@@ -247,7 +248,9 @@ async def find_free_usernames(
                 )
 
             elif status == "purchase":
+
                 add_purchase(username)
+
                 purchase.add(username)
                 already_checked.add(username)
 
@@ -257,7 +260,9 @@ async def find_free_usernames(
                 )
 
             elif status == "free":
+
                 add_free(username)
+
                 free.add(username)
                 already_checked.add(username)
 
@@ -273,20 +278,38 @@ async def find_free_usernames(
                 if len(results) >= limit:
                     break
 
-            elif status == "error":
+            elif status == "invalid":
+
                 print(
-                    f"⚠️ Ошибка проверки @{username} "
+                    f"⚪ @{username} "
                     f"[{session_name}]"
                 )
 
-            # Небольшая пауза между запросами.
+            elif status == "error":
+
+                print(
+                    f"⚠️ Ошибка проверки "
+                    f"@{username} "
+                    f"[{session_name}]"
+                )
+
+            # Только после успешной проверки
+            # переходим к следующему username.
+            username_index += 1
+
             await asyncio.sleep(CHECK_DELAY)
 
     finally:
-        # Корректно закрываем все Telegram-клиенты.
-        for account in clients:
+
+        # =====================================================
+        # ОТКЛЮЧАЕМ ВСЕ СЕССИИ
+        # =====================================================
+
+        for account in accounts:
+
             try:
                 await account["client"].disconnect()
+
             except Exception:
                 pass
 
