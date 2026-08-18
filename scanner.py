@@ -107,13 +107,44 @@ async def find_free_usernames(
     clients = []
 
     for session_name in SESSION_NAMES:
-        client = TelegramClient(
-            session_name,
-            api_id,
-            api_hash,
+    session_path = Path(session_name)
+
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print(f"🔎 Сессия: {session_name}")
+    print(f"📂 Рабочая папка: {Path.cwd()}")
+    print(f"📄 Путь к session: {session_path.resolve()}")
+    print(f"📦 Файл существует: {session_path.exists()}")
+
+    if session_path.exists():
+        print(f"📏 Размер файла: {session_path.stat().st_size} байт")
+
+    client = TelegramClient(
+        session_name,
+        api_id,
+        api_hash,
+    )
+
+    await client.connect()
+
+    print(f"🔌 Telegram connected: {client.is_connected()}")
+
+    authorized = await client.is_user_authorized()
+
+    print(f"🔐 Авторизована: {authorized}")
+
+    if not authorized:
+        await client.disconnect()
+        raise RuntimeError(
+            f"Сессия '{session_name}' не авторизована."
         )
 
-        await client.connect()
+    clients.append({
+        "name": session_name,
+        "client": client,
+        "cooldown_until": 0.0,
+    })
+
+    print(f"🟢 Сессия подключена: {session_name}")
 
         # Очень важно:
         # если сессия не авторизована, НЕ пытаемся вводить телефон.
